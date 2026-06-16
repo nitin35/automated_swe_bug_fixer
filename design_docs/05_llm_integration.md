@@ -185,18 +185,27 @@ class LLMRouter:
 
     def get_cost_report(self) -> dict:
         """Return a summary of costs for the current session."""
+        # Group by model tier (requires tier stored in LLMCallRecord)
+        tier_counts = {}
+        for c in self.call_history:
+            tier = self._get_tier_for_model(c.model)
+            tier_counts[tier] = tier_counts.get(tier, 0) + 1
         return {
             "total_cost": self.total_cost,
             "total_calls": len(self.call_history),
-            "by_tier": {
-                tier: sum(1 for c in self.call_history if c.model.startswith(tier))
-                for tier in ["llama3.2:1b", "qwen2.5-coder:7b", "llama3.1:8b"]
-            },
+            "by_tier": tier_counts,
             "by_agent": {
                 agent: sum(1 for c in self.call_history if c.agent_name == agent)
                 for agent in set(c.agent_name for c in self.call_history)
             },
         }
+
+    def _get_tier_for_model(self, model: str) -> str:
+        """Reverse-lookup tier from model name."""
+        for tier in ("lite", "medium", "heavy"):
+            if self.config["models"].get(tier) == model:
+                return tier
+        return "unknown"
 ```
 
 ## 5.4 Prompt Management
@@ -219,7 +228,7 @@ prompts/
     thinking_framework.txt   # Step-by-step thinking guide
 ```
 
-### Example Template (Jinja2-like, using f-strings)
+### Example Template (Python `.format()` style)
 
 ```python
 # prompts/fix/generate_patch.txt
@@ -255,14 +264,15 @@ class LLMRouter:
         last_error = None
         for attempt in range(1 + retries):
             try:
-                return await self.query(...)
+                # On the last attempt, fall back to a simpler model if configured
+                current_tier = tier
+                if fallback_tier and attempt == retries:
+                    current_tier = fallback_tier
+                return await self.query(..., tier=current_tier)
             except LLMError as e:
                 last_error = e
                 if attempt < retries:
                     await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                    if fallback_tier and attempt == retries:
-                        # Fall back to a lower tier on last retry
-                        tier = fallback_tier
         raise last_error
 ```
 
@@ -299,3 +309,37 @@ This maps roughly to:
 - **Low effort**: temperature=0.0, concise prompts → classification, formatting
 - **Medium effort**: temperature=0.2, step-by-step → code generation, analysis
 - **High effort**: temperature=0.5, detailed reasoning → planning, root cause
+
+## 5.8 Provider Abstraction (Future-Ready)
+
+The `LLMRouter` currently calls the Ollama HTTP API directly. To support additional providers (OpenAI, Anthropic), extract a provider interface:
+
+```python
+class LLMProvider(ABC):
+    """Abstract base for LLM providers."""
+
+    @abstractmethod
+    async def generate(self, system: str, prompt: str,
+                       temperature: float, max_tokens: int) -> dict:
+        """Send a prompt and return raw response data."""
+        pass
+
+    @abstractmethod
+    async def embed(self, text: str) -> list[float]:
+        """Generate an embedding for the given text."""
+        pass
+
+class OllamaProvider(LLMProvider):
+    """Ollama HTTP API provider (current implementation)."""
+    async def generate(self, system, prompt, temperature, max_tokens):
+        # POST /api/generate with {model, system, prompt, options}
+        ...
+
+class OpenAIProvider(LLMProvider):
+    """OpenAI-compatible provider (future)."""
+    async def generate(self, system, prompt, temperature, max_tokens):
+        # POST /v1/chat/completions with {model, messages, temperature, max_tokens}
+        ...
+```
+
+The `LLMRouter` would then accept a `LLMProvider` instance and delegate to it, making the router provider-agnostic. This is a recommended refactor for Milestone 8+.

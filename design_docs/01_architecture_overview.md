@@ -84,7 +84,9 @@ Three storage layers:
    c. Creates a Context object for this run
    d. Begins dynamic orchestration
 
-3. Typical workflow (MVP = Reproduction → Fix → Validation):
+3. Typical workflow (MVP = Retrieval → Reproduction → Fix → Validation):
+   Master → Retrieval Agent: "Find relevant code context"
+     Retrieval Agent → Master: {relevant_files: {...}, context_notes: "..."}
    Master → Reproduction Agent: "Reproduce the bug"
      Reproduction Agent → Master: {success: True, error_log: "..."}
    Master → Fix Agent: "Generate a fix"
@@ -103,7 +105,7 @@ Three storage layers:
 | Communication | In-process pub/sub bus | Simple, no network overhead, easy to debug. Can be swapped for distributed bus later. |
 | Agent isolation | Classes + explicit interfaces | No separate processes needed for MVP. Each agent = a class with a `run(context)` method. |
 | State persistence | SQLite + FAISS vector store + filesystem | Zero setup, portable, production-grade vector search from day one. Can migrate to Postgres + pgvector later. |
-| LLM access | Single wrapper over Ollama HTTP API | Abstraction layer makes it easy to add OpenAI/Anthropic later. |
+| LLM access | Provider-abstracted LLM Router over Ollama HTTP API | Provider adapter layer makes it easy to add OpenAI/Anthropic later. |
 | Dynamic orchestration | Master uses LLM + rules to plan | Most flexible. Master can adapt to issue complexity. |
 | Extensibility | Plugin-style agent registration | New agents can be added by implementing an interface. |
 

@@ -36,7 +36,7 @@ class RunContext:
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
     # Set by Master
-    plan: list[dict] = field(default_factory=list)
+    plan: list["PlanStep"] = field(default_factory=list)
 
     # Set by Reproduction Agent
     repo_path: Optional[str] = None
@@ -101,6 +101,11 @@ class Issue:
     pass_to_pass: str              # JSON-encoded list of test names
     environment_setup_commit: str
     solved: int                    # 0 or 1
+    # NOTE: fail_to_pass and pass_to_pass are JSON-encoded strings from the dataset.
+    # Parse them with json.loads() on construction or provide a property:
+    #   @property
+    #   def failing_tests(self) -> list[str]:
+    #       return json.loads(self.fail_to_pass)
 ```
 
 ### Plan (Orchestration)
@@ -147,14 +152,8 @@ class Event:
     timestamp: float = 0.0
     run_id: Optional[str] = None
 
-@dataclass
-class Query:
-    """Request information from another Agent."""
-    target: str
-    query_type: str
-    payload: dict
-    reply_to: str
-    message_id: str
+# Query message type — designed but deferred to post-MVP.
+# See 03_communication_system.md §3.8 for future plans.
 ```
 
 ## 7.4 LLM Models
@@ -273,16 +272,44 @@ All dataclasses should support JSON serialization:
 
 ```python
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
+from typing import get_type_hints, get_origin, get_args
 
 def model_to_json(model) -> str:
     """Serialize any dataclass model to JSON."""
     return json.dumps(asdict(model), indent=2, default=str)
 
 def json_to_model(cls, json_str: str):
-    """Deserialize JSON back to a dataclass."""
+    """Deserialize JSON back to a dataclass, handling nested dataclasses.
+    
+    For deeply nested or complex models, consider using the `dacite` library
+    or migrating to Pydantic's `BaseModel` which handles this natively.
+    """
     data = json.loads(json_str)
-    return cls(**data)
+    return _from_dict(cls, data)
+
+def _from_dict(cls, data: dict):
+    """Recursively convert a dict to a dataclass, handling nested types."""
+    if not hasattr(cls, '__dataclass_fields__'):
+        return data  # Not a dataclass, return as-is
+    hints = get_type_hints(cls)
+    kwargs = {}
+    for f in fields(cls):
+        if f.name not in data:
+            continue
+        value = data[f.name]
+        field_type = hints[f.name]
+        # Handle List[SomeDataclass]
+        origin = get_origin(field_type)
+        if origin is list and value is not None:
+            args = get_args(field_type)
+            if args and hasattr(args[0], '__dataclass_fields__'):
+                value = [_from_dict(args[0], item) for item in value]
+        # Handle nested dataclass
+        elif hasattr(field_type, '__dataclass_fields__') and isinstance(value, dict):
+            value = _from_dict(field_type, value)
+        kwargs[f.name] = value
+    return cls(**kwargs)
 ```
 
 ## 7.8 Schema Versioning
@@ -291,3 +318,12 @@ def json_to_model(cls, json_str: str):
 - The knowledge base tracks the schema version in a metadata table
 - Migration scripts live in `db/migrations/v1_to_v2.py`
 - This allows the system to evolve without losing data
+
+```python
+# Add to SQLite on init:
+# CREATE TABLE IF NOT EXISTS schema_meta (
+#     key TEXT PRIMARY KEY,
+#     value TEXT
+# );
+# INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '1');
+```

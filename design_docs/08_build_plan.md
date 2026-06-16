@@ -43,10 +43,13 @@ automated_swe_bug_fixer/
 │   ├── agents/
 │   │   ├── __init__.py
 │   │   ├── base.py            # BaseAgent class
-│   │   ├── master.py          # Master Agent
+│   │   ├── master.py          # Master Agent (does NOT extend BaseAgent)
+│   │   ├── retrieval.py       # Retrieval Agent
 │   │   ├── reproduction.py    # Reproduction Agent
+│   │   ├── analysis.py        # Analysis Agent (stub for MVP)
 │   │   ├── fix.py             # Fix Generation Agent
-│   │   └── validation.py      # Validation Agent
+│   │   ├── validation.py      # Validation Agent
+│   │   └── review.py          # Review Agent (stub for MVP)
 │   └── bug_source/            # Symlink or import from existing
 ├── tests/
 │   ├── __init__.py
@@ -335,7 +338,7 @@ automated_swe_bug_fixer/
        assert results2[0]["id"] == "doc2"
    ```
 
-4. **Wire everything into a `KnowledgeBase` facade class**
+5. **Wire everything into a `KnowledgeBase` facade class**
    - `db`, `vectors`, `cache` attributes
    - Convenience methods: `find_similar_issues()`, `record_run()`
 
@@ -420,7 +423,7 @@ automated_swe_bug_fixer/
        assert result["success"] == True  # Bug was reproduced
        assert "test_divide" in str(result["failing_tests"])
    ```
-   **Note:** The test repo `nitin35/test_bug_fix` is a real GitHub repo. If it doesn't exist, create a minimal test repo locally.
+   **Note:** Create a minimal local test fixture repo in `tests/fixtures/test_repo/` with a simple `calculator.py` and `test_calculator.py`. This avoids depending on external GitHub repos that may change or disappear.
 
 3. **Error handling**
    - Timeout: kill subprocess after N seconds
@@ -476,14 +479,22 @@ automated_swe_bug_fixer/
 3. **Implement patch extraction logic**
    ```python
    def extract_patch(llm_response: str) -> str | None:
-       """Extract the git diff patch from LLM response."""
-       # Look for diff --git ... blocks
+       """Extract the git diff patch from LLM response.
+       Handles markdown code fences and trailing explanation text."""
+       import re
+       # First try: extract from markdown code block
+       match = re.search(r'```(?:diff)?\s*\n(diff --git.*?)```', llm_response, re.DOTALL)
+       if match:
+           return match.group(1).strip()
+       # Fallback: find diff block directly, stopping at non-diff lines
        lines = llm_response.split('\n')
-       in_diff = False
        patch_lines = []
+       in_diff = False
        for line in lines:
            if line.startswith('diff --git'):
                in_diff = True
+           elif in_diff and not line.startswith(('+', '-', ' ', '@', 'index ', '---', '+++', 'diff ')) and line.strip():
+               in_diff = False  # End of diff block
            if in_diff:
                patch_lines.append(line)
        return '\n'.join(patch_lines) if patch_lines else None
@@ -766,15 +777,22 @@ automated_swe_bug_fixer/
        kb = KnowledgeBase(...)
 
        # Create agents
-       master = MasterAgent("master", bus, llm, kb)
+       master = MasterAgent(bus, llm, kb)
        reproduction = ReproductionAgent("reproduction", bus, llm, kb)
        fix = FixGenerationAgent("fix", bus, llm, kb)
        validation = ValidationAgent("validation", bus, llm, kb)
 
        # Optional: register Retrieval if implemented
-       # from src.agents.retrieval import RetrievalAgent
-       # retrieval = RetrievalAgent("retrieval", bus, llm, kb)
-       # master.register_agent("retrieval", retrieval)
+       retrieval = RetrievalAgent("retrieval", bus, llm, kb)
+
+       # IMPORTANT: Start agent event loops BEFORE Master sends directives.
+       # Each agent listens for directives on the bus in its own task.
+       agent_tasks = [
+           asyncio.create_task(reproduction.run_loop()),
+           asyncio.create_task(fix.run_loop()),
+           asyncio.create_task(validation.run_loop()),
+           asyncio.create_task(retrieval.run_loop()),
+       ]
 
        # Get issue
        source = SWEBenchLiteSource()
@@ -873,7 +891,7 @@ automated_swe_bug_fixer/
    - Add `poll_interval`, `max_concurrent_runs`, `hitl_timeout` to config
    - Test running 2-3 issues in sequence via the service loop
 
-8. **Improve error handling and logging**
+9. **Improve error handling and logging**
    - Structured logging (JSON format for machine parsing)
    - Better timeout handling
    - Parallel execution of independent steps
@@ -902,15 +920,15 @@ automated_swe_bug_fixer/
 | Phase 5: Autonomous Platform | Future | Future work |
 
 ```
-Milestone 0: Project scaffold & test harness       [Day 1]
-Milestone 1: Message Bus + BaseAgent               [Day 2]
-Milestone 2: LLM Router                            [Day 3]
-Milestone 3: Knowledge Base (MVP)                  [Day 4-5]
-Milestone 4: Reproduction Agent                    [Day 5-6]
-Milestone 5: Fix Generation Agent                  [Day 7-8]
-Milestone 6: Validation Agent                      [Day 9]
-Milestone 7: Master Agent + Full MVP Pipeline      [Day 10-11]
-Milestone 8: Real Dataset + Analysis + Polish      [Day 12-15]
+Milestone 0: Project scaffold & test harness       [Day 1-2]
+Milestone 1: Message Bus + BaseAgent               [Day 3-4]
+Milestone 2: LLM Router                            [Day 5-6]
+Milestone 3: Knowledge Base (MVP)                  [Day 7-9]
+Milestone 4: Reproduction Agent                    [Day 10-12]
+Milestone 5: Fix Generation Agent                  [Day 13-15]
+Milestone 6: Validation Agent                      [Day 16-17]
+Milestone 7: Master Agent + Full MVP Pipeline      [Day 18-22]
+Milestone 8: Real Dataset + Analysis + Polish      [Day 23-30]
 ```
 
 ## 8.3 Quick Wins & Pitfalls to Avoid
@@ -922,6 +940,7 @@ Milestone 8: Real Dataset + Analysis + Polish      [Day 12-15]
 - Use `asyncio.gather` for independent operations (e.g., cloning + analysis)
 - **Implement a minimal Retrieval Agent early** — even a `grep`-based file finder dramatically improves Fix Agent accuracy
 - **Keep HITL simple** — a CLI `input()` prompt is fine for MVP; upgrade to a web UI later
+- **Add a `--dry-run` flag early** — runs the full pipeline but skips applying patches and modifying repos. Invaluable for development and debugging.
 
 ### Pitfalls
 - **Don't over-engineer the bus**: Start simple, add features only when needed

@@ -127,9 +127,16 @@ class FAISSVectorStore:
     - L2 distance converted to similarity score on output
     """
 
-    DIMENSION = 384  # all-MiniLM-L6-v2 embedding dimension
-
-    def __init__(self, path: str, dimension: int = DIMENSION):
+    def __init__(self, path: str, dimension: int = None):
+        """Initialize the vector store.
+        
+        Args:
+            path: Directory to store the index files.
+            dimension: Embedding dimension. If None, auto-detected from
+                       the first vector added. Must match your embedding
+                       model (e.g., 384 for all-MiniLM-L6-v2, 2048 for
+                       llama3.2:1b, 768 for nomic-embed-text).
+        """
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
         self.dimension = dimension
@@ -142,9 +149,13 @@ class FAISSVectorStore:
             self.index = faiss.read_index(str(self.index_path))
             with open(self.metadata_path, "rb") as f:
                 self.metadata = pickle.load(f)
-        else:
-            # Flat (brute-force) L2 index — exact search, perfect for MVP scale
+            self.dimension = self.index.d  # Read dimension from saved index
+        elif self.dimension is not None:
             self.index = faiss.IndexFlatL2(self.dimension)
+            self.metadata = []
+        else:
+            # Dimension will be set on first add()
+            self.index = None
             self.metadata = []
 
     def _save(self):
@@ -152,23 +163,31 @@ class FAISSVectorStore:
         with open(self.metadata_path, "wb") as f:
             pickle.dump(self.metadata, f)
 
-    def add(self, embedding: list[float], metadata: dict):
+    def add(self, embedding: list[float], metadata: dict, auto_save: bool = True):
         """Add a single vector with associated metadata."""
         vec = np.array([embedding], dtype=np.float32)
+        if self.index is None:
+            # Auto-detect dimension from first vector
+            self.dimension = len(embedding)
+            self.index = faiss.IndexFlatL2(self.dimension)
         self.index.add(vec)
         self.metadata.append(metadata)
-        self._save()
+        if auto_save:
+            self._save()
 
     def add_batch(self, embeddings: list[list[float]], metadatas: list[dict]):
-        """Add multiple vectors at once (more efficient)."""
+        """Add multiple vectors at once (more efficient). Always saves after."""
         vecs = np.array(embeddings, dtype=np.float32)
+        if self.index is None:
+            self.dimension = vecs.shape[1]
+            self.index = faiss.IndexFlatL2(self.dimension)
         self.index.add(vecs)
         self.metadata.extend(metadatas)
         self._save()
 
     def search(self, query_embedding: list[float], k: int = 5) -> list[dict]:
         """Find k most similar items. Returns metadata + similarity score."""
-        if self.index.ntotal == 0:
+        if self.index is None or self.index.ntotal == 0:
             return []
 
         query = np.array([query_embedding], dtype=np.float32)
@@ -261,7 +280,7 @@ cache/
 - **Patches**: Generated per run, kept indefinitely for analysis.
 - **Logs**: Kept for 30 days, then compressed.
 
-## 4.6 Knowledge Sharing Between Agents
+## 4.5 Knowledge Sharing Between Agents
 
 The knowledge base is not just for storage — it's also a communication medium:
 
@@ -327,3 +346,5 @@ class KnowledgeBase:
     async def get_repo_path(self, repo_name) -> str | None: ...
     async def cache_repo(self, repo_name, local_path): ...
 ```
+
+**Implementation note:** SQLite operations are synchronous. For the async interface, use `aiosqlite` or wrap calls with `asyncio.to_thread()` to avoid blocking the event loop.

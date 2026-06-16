@@ -23,12 +23,17 @@ The Master does **not** use a hard-coded pipeline. Instead, it maintains a **pla
 ```python
 @dataclass
 class PlanStep:
+    step_id: str                  # Unique identifier for this step
     agent: str                    # Agent name (e.g., "reproduction", "fix")
     action: str                   # Action to perform
     params: dict                  # Parameters for the agent
     depends_on: list[str]        # Step IDs that must complete first
     status: str = "pending"      # pending | running | completed | failed | skipped
+    timeout: int = 300            # Max execution time in seconds
+    retries: int = 0              # Current retry count
+    max_retries: int = 2          # Maximum retries allowed
     result: Any = None
+    error: Optional[str] = None   # Error message if failed
 ```
 
 ### Planning Strategies
@@ -55,14 +60,13 @@ The Master can plan in several ways:
 Each agent follows this lifecycle:
 
 ```
-REGISTERED → ACTIVATED → RUNNING → COMPLETED | FAILED
-                ↑                              |
-                └────── (retry) ───────────────┘
+REGISTERED → RUNNING → COMPLETED | FAILED
+                ↑                    |
+                └──── (retry) ──────┘
 ```
 
-- **REGISTERED**: Agent is known to the system but not yet used
-- **ACTIVATED**: Master has decided to use this agent for the current run
-- **RUNNING**: Agent is executing its task
+- **REGISTERED**: Agent is known to the system (registered on the bus)
+- **RUNNING**: Agent is executing a directive
 - **COMPLETED**: Agent finished successfully
 - **FAILED**: Agent encountered an error (Master may retry or skip)
 
@@ -70,6 +74,9 @@ REGISTERED → ACTIVATED → RUNNING → COMPLETED | FAILED
 
 ```python
 class MasterAgent:
+    """Orchestrates the bug-fix pipeline. Does NOT extend BaseAgent —
+    it drives the plan loop rather than listening for directives."""
+
     def __init__(self, message_bus, knowledge_base, llm_router):
         self.bus = message_bus
         self.kb = knowledge_base
@@ -81,7 +88,11 @@ class MasterAgent:
 
     async def run(self, issue: dict) -> RunResult:
         # 1. Create context for this run
-        context = RunContext(issue=issue)
+        context = RunContext(
+            run_id=uuid4().hex,
+            instance_id=issue["instance_id"],
+            issue=issue
+        )
 
         # 2. Check knowledge base for similar past issues
         similar = await self.kb.find_similar_issues(issue)
@@ -97,15 +108,19 @@ class MasterAgent:
                 step.status = "running"
                 agent = self.agents[step.agent]
                 # Dispatch via message bus
-                await self.bus.send(
-                    to=step.agent,
-                    directive="execute",
-                    payload={"action": step.action, "params": step.params, "context": context}
+                directive = Directive(
+                    target=step.agent,
+                    action=step.action,
+                    message_id=step.step_id,
+                    payload=step.params,
+                    timeout=step.timeout,
+                    run_id=context.run_id,
                 )
+                await self.bus.send_directive(directive)
 
             # Wait for results (via bus events)
-            result = await self.bus.wait_for_event(timeout=300)
-            self.handle_result(plan, result, context)
+            result = await self.bus.listen_for("master", timeout=300)
+            self._handle_result(plan, result, context)
 
             # Optionally re-plan
             if self.should_replan(result, context):
@@ -149,6 +164,44 @@ class MasterAgent:
 | Review finds security issue | Loop back to Fix Agent with review comments |
 | Multiple retries fail | Mark as unsolved, log full trace for learning |
 
+### Re-Planning Logic (Rule-Based MVP)
+
+```python
+def _should_replan(self, event, context: RunContext) -> bool:
+    """Decide whether to rebuild the plan based on an agent result."""
+    if event.type == "task.failed":
+        failed_agent = event.source
+        step = self._find_step(event.message_id)
+        if step and step.retries < step.max_retries:
+            step.retries += 1
+            step.status = "pending"  # Re-queue the same step
+            return False             # No full re-plan needed
+        if failed_agent == "reproduction" and "retrieval" in self.agents:
+            # Reproduction failed — try retrieval for build context
+            return True
+        if failed_agent == "fix":
+            # Fix failed — escalate to analysis for better context
+            return True
+    if event.type == "task.completed" and event.source == "validation":
+        if not event.payload.get("all_tests_pass"):
+            # Tests still failing — loop back to fix with test output
+            return True
+    return False
+
+def _handle_result(self, plan, event, context: RunContext):
+    """Process an agent completion/failure event."""
+    step = self._find_step(event.message_id)
+    if not step:
+        return
+    if event.type == "task.completed":
+        step.status = "completed"
+        step.result = event.payload
+        self._update_context(context, step, event.payload)
+    elif event.type == "task.failed":
+        step.status = "failed"
+        step.error = event.payload.get("error", "Unknown error")
+```
+
 ## 2.6 Concurrency Model (MVP)
 
 For the MVP, agents run **sequentially** within the Master's event loop. This keeps things simple:
@@ -185,7 +238,7 @@ class MasterService:
                     )
                     self.active_runs[issue["instance_id"]] = task
                     task.add_done_callback(
-                        lambda t: self._cleanup(t, issue["instance_id"])
+                        lambda t, iid=issue["instance_id"]: self._cleanup(t, iid)
                     )
             await asyncio.sleep(self.poll_interval)
 
@@ -222,9 +275,18 @@ Each agent class implements:
 
 ```python
 class BaseAgent(ABC):
+    """Base class for all sub-agents (NOT the Master)."""
+
+    def __init__(self, name: str, bus: MessageBus, llm: LLMRouter, kb: KnowledgeBase):
+        self.name = name
+        self.bus = bus
+        self.llm = llm
+        self.kb = kb
+        bus.register_agent(name, self)
+
     @abstractmethod
-    async def execute(self, directive: Directive, context: RunContext) -> AgentResult:
-        """Execute a task given by the Master."""
+    async def execute(self, directive: Directive) -> dict:
+        """Execute a task given by the Master. Returns a result dict."""
         pass
 
     @property

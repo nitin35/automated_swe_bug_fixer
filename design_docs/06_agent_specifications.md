@@ -4,6 +4,8 @@
 
 Six specialized agents, each with a single responsibility. All agents inherit from `BaseAgent` and follow the same lifecycle.
 
+> **Canonical types:** All agent input/output dataclasses are defined in [07_data_models.md](07_data_models.md) §7.6. The types shown inline below are summaries.
+
 ```
 BaseAgent
 ├── RetrievalAgent
@@ -18,6 +20,9 @@ BaseAgent
 
 ```python
 class BaseAgent(ABC):
+    """Base class for all sub-agents (NOT the Master).
+    See 03_communication_system.md for the run_loop() implementation."""
+
     def __init__(self, name: str, bus: MessageBus, llm: LLMRouter, kb: KnowledgeBase):
         self.name = name
         self.bus = bus
@@ -27,12 +32,19 @@ class BaseAgent(ABC):
 
     @abstractmethod
     async def execute(self, directive: Directive) -> dict:
-        """Execute the given directive. Returns a result dict."""
+        """Execute the given directive. Returns a result dict.
+        
+        The directive contains:
+          - action: str — what to do (e.g., "reproduce_bug", "generate_fix")
+          - payload: dict — action-specific parameters
+          - message_id: str — unique ID for tracking
+          - timeout: int — max execution time in seconds
+        """
         pass
 
     async def run_loop(self):
-        """Main event loop — listens for directives on the bus."""
-        # See 03_communication_system.md for implementation
+        """Main event loop — listens for directives on the bus.
+        See 03_communication_system.md §3.6 for full implementation."""
         ...
 ```
 
@@ -121,7 +133,7 @@ class BaseAgent(ABC):
 **Outputs:**
 ```python
 {
-    "success": True,              # Was reproduction successful?
+    "bug_reproduced": True,       # Was the bug successfully reproduced? (True = tests failed as expected)
     "error_log": "ZeroDivisionError: division by zero\n  File calculator.py:12 ...",
     "failing_tests": ["test_calculator.py::test_divide"],
     "passing_tests": ["test_calculator.py::test_add", ...],
@@ -141,6 +153,7 @@ class BaseAgent(ABC):
 - Uses `subprocess` to run build/test commands
 - Sets a strict timeout on all subprocess calls (e.g., 5 minutes)
 - Caches cloned repos to avoid re-cloning
+- **Naming note:** `bug_reproduced=True` means the bug was confirmed (tests failed as expected). This avoids confusion with `success=True` which could be misread as "tests passed."
 
 ---
 
@@ -324,6 +337,7 @@ class BaseAgent(ABC):
 **When invoked:**
 - After validation passes (final step)
 - Can be skipped for quick runs
+- Controlled by `config.yaml` setting: `review: { enabled: true }`. Master's `build_plan()` checks this flag.
 
 **Inputs:**
 ```python
