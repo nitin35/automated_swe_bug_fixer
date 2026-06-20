@@ -82,13 +82,14 @@ This table tracks the implementation status of each milestone. Agents should upd
 |---|---|---|---|
 | **M0** | [Project Scaffold & Test Harness](design_docs/08_build_plan.md#L26) | ✅ Completed | Structure, config loading, core models and unit tests successfully implemented |
 | **M1** | [Message Bus + BaseAgent](design_docs/08_build_plan.md#L162) | ✅ Completed | MessageBus and BaseAgent class implemented with tests verifying event loops and message routing |
-| **M2** | LLM Router & Prompt Management | ⏳ Not Started | Ready to start implementing LLM routing, Prompt templates and token tracking |
-| **M3** | Knowledge Base & Memory Stores | ⏳ Not Started | |
+| **M2** | LLM Router & Prompt Management | ✅ Completed | LLMRouter class with cost tracking, token metrics, prompt template loader, backoff retry and tier routing implemented |
+| **M3** | Knowledge Base & Memory Stores | ⏳ Not Started | Ready to start implementing SQLite storage, FAISS vector index and file cache |
 | **M4** | Core Sub-Agents (Retrieval & Reproduction) | ⏳ Not Started | |
 | **M5** | The Master Agent Loop (Execution Engine) | ⏳ Not Started | |
 | **M6** | Generating & Validating Fixes | ⏳ Not Started | |
 | **M7** | Human-in-the-Loop (HITL) & Service Mode | ⏳ Not Started | |
 | **M8** | Collaborative & Multi-File (V2 Architecture) | ⏳ Not Started | |
+
 
 
 

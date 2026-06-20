@@ -1,0 +1,4 @@
+Problem statement: {problem_statement}
+Repo: {repo}
+
+Please output the shell commands required to reproduce this bug locally.

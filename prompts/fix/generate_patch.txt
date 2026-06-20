@@ -1,0 +1,6 @@
+Problem statement: {problem_statement}
+Error log: {error_log}
+Repo structure: {repo_structure}
+Code context: {code_context}
+
+Please generate a git patch to fix the bug. Provide your explanation first, then follow with the patch in diff format.

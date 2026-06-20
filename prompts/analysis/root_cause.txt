@@ -1,0 +1,4 @@
+Problem statement: {problem_statement}
+Error log: {error_log}
+
+Please perform a root cause analysis of the bug. Identify which files are affected and draft a fix hypothesis.
