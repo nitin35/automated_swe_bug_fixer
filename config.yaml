@@ -1,0 +1,36 @@
+models:
+  lite: "llama3.2:1b"
+  medium: "qwen2.5-coder:7b"
+  heavy: "llama3.1:8b"
+  embedding: "llama3.2:1b"
+
+timeouts:
+  lite: 30
+  medium: 120
+  heavy: 300
+
+cost_weights:
+  lite: 1
+  medium: 5
+  heavy: 10
+
+paths:
+  cache_dir: "cache"
+  db_path: "swebench_lite.db"
+  prompts_dir: "prompts"
+
+ollama:
+  base_url: "http://localhost:11434"
+
+master:
+  max_retries: 2
+  daily_cost_limit: 100.0
+
+hitl:
+  required: true
+  timeout: 3600          # Seconds to wait for human decision
+
+service:
+  enabled: false         # Enable for daemon mode
+  poll_interval: 300
+  max_concurrent_runs: 1
