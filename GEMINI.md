@@ -84,11 +84,12 @@ This table tracks the implementation status of each milestone. Agents should upd
 | **M1** | [Message Bus + BaseAgent](design_docs/08_build_plan.md#L162) | ✅ Completed | MessageBus and BaseAgent class implemented with tests verifying event loops and message routing |
 | **M2** | LLM Router & Prompt Management | ✅ Completed | LLMRouter class with cost tracking, token metrics, prompt template loader, backoff retry and tier routing implemented |
 | **M3** | Knowledge Base & Memory Stores | ✅ Completed | SQLite storage, FAISS vector index, and file cache repo cloning wrapper successfully implemented and tested |
-| **M4** | Core Sub-Agents (Retrieval & Reproduction) | ⏳ Not Started | Ready to start implementing Retrieval and Reproduction Agents |
-| **M5** | The Master Agent Loop (Execution Engine) | ⏳ Not Started | |
+| **M4** | Core Sub-Agents (Retrieval & Reproduction) | ✅ Completed | RetrievalAgent (code search, structure list, file read) and ReproductionAgent (clone, dependency install, pytest runner) implemented and tested |
+| **M5** | The Master Agent Loop (Execution Engine) | ⏳ Not Started | Ready to start implementing Master Agent and plan orchestration loop |
 | **M6** | Generating & Validating Fixes | ⏳ Not Started | |
 | **M7** | Human-in-the-Loop (HITL) & Service Mode | ⏳ Not Started | |
 | **M8** | Collaborative & Multi-File (V2 Architecture) | ⏳ Not Started | |
+
 
 
 
